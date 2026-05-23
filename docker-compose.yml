@@ -1,0 +1,23 @@
+services:
+  vkr-backend:
+    container_name: vkr-backend
+    build: docker/images/php
+    working_dir: /app
+    user: ${UID:-1000}:${GID:-1000}
+    volumes:
+      - ${PWD}:/app
+      - .composer:/.composer
+    environment:
+      - COMPOSER_ALLOW_SUPERUSER=1
+      - APP_ENV=${APP_ENV}
+    env_file:
+      - .env
+      - .env.local
+    networks:
+      - vkr-inner-network
+
+
+networks:
+  vkr-inner-network:
+    name: vkr-scinside-internal
+    external: true
