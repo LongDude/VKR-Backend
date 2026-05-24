@@ -81,16 +81,49 @@ SELECT
     f.name,
     f.openalex_id,
     d.id AS domain_id,
-    d.name AS domain_name
+    d.name AS domain_name,
+    COUNT(DISTINCT sf.id)::integer AS subfields_count
 FROM fields f
 LEFT JOIN domains d ON d.id = f.domain_id
+LEFT JOIN subfields sf ON sf.field_id = f.id
 WHERE f.id = :field_id
+GROUP BY f.id, f.name, f.openalex_id, d.id, d.name
 SQL,
             ['field_id' => $fieldId],
             ['field_id' => ParameterType::INTEGER],
         );
 
         return false === $row ? null : $row;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function loadCoveredMonthsForField(int $fieldId, \DateTimeImmutable $dateFrom, \DateTimeImmutable $dateTo): array
+    {
+        $rows = $this->connection->fetchFirstColumn(
+            <<<'SQL'
+SELECT DISTINCT TO_CHAR(s.period_start, 'YYYY-MM') AS period_month
+FROM openalex_montly_topic_stats s
+JOIN topics t ON t.id = s.topic_id
+JOIN subfields sf ON sf.id = t.subfield_id
+WHERE sf.field_id = :field_id
+  AND s.period_start BETWEEN :date_from AND :date_to
+ORDER BY period_month ASC
+SQL,
+            [
+                'field_id' => $fieldId,
+                'date_from' => $dateFrom->format('Y-m-d'),
+                'date_to' => $dateTo->format('Y-m-d'),
+            ],
+            [
+                'field_id' => ParameterType::INTEGER,
+                'date_from' => ParameterType::STRING,
+                'date_to' => ParameterType::STRING,
+            ],
+        );
+
+        return array_map('strval', $rows);
     }
 
     public function findMaxPeriodForField(int $fieldId): ?\DateTimeImmutable

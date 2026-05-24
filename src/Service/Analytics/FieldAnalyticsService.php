@@ -9,8 +9,6 @@ use App\Repository\FieldAnalyticsRepository;
 
 final class FieldAnalyticsService
 {
-    private const EPSILON_COUNT = 5.0;
-    private const EPSILON_SHARE = 0.000001;
     private const ACTIVE_TOPIC_THRESHOLD = 10;
     private const RANKING_LIMIT = 15;
 
@@ -52,11 +50,11 @@ final class FieldAnalyticsService
         $loadStart = $periodStart < $metricStart ? $periodStart : $metricStart;
 
         $rows = $this->repository->loadTopicMonthlyStats($fieldId, $loadStart, $periodEnd);
-        $state = $this->buildMonthlyState($rows, $loadStart, $periodEnd);
+        $coveredMonths = $this->coveredMonthSet($this->repository->loadCoveredMonthsForField($fieldId, $loadStart, $periodEnd));
+        $state = $this->buildMonthlyState($rows, $loadStart, $periodEnd, $coveredMonths);
         $chartMonths = $this->monthKeys($periodStart, $periodEnd);
-        $allMonths = $this->monthKeys($loadStart, $periodEnd);
 
-        $topicMetrics = $this->buildTopicMetrics($state, $periodEnd, $comparisonWindow, $allMonths);
+        $topicMetrics = $this->buildTopicMetrics($state, $periodEnd, $comparisonWindow);
         $topicMetrics = $this->scoreTopicMetrics($topicMetrics);
         $subfieldActivity = $this->buildSubfieldActivity($state, $periodEnd, $comparisonWindow, $movingAverageWindow, $chartMonths);
 
@@ -69,15 +67,18 @@ final class FieldAnalyticsService
                 'movingAverageMonths' => $movingAverageWindow,
                 'availablePeriodEnd' => null === $maxPeriod ? null : $maxPeriod->format('Y-m'),
             ],
-            'kpi' => $this->buildKpi($state, $periodEnd, $topicMetrics),
+            'kpi' => $this->buildKpi($fieldRow, $state, $periodEnd, $comparisonWindow, $topicMetrics),
             'fieldActivity' => [
-                'series' => $this->buildSeries($state['fieldCounts'], $chartMonths, $movingAverageWindow),
+                'series' => $this->buildSeries($state['fieldCounts'], $chartMonths, $movingAverageWindow, $state['coveredMonths']),
             ],
             'subfieldActivity' => [
                 'items' => $subfieldActivity,
             ],
             'topicMap' => [
-                'points' => array_map(fn (array $metric): array => $this->topicPoint($metric), $topicMetrics),
+                'points' => array_values(array_filter(
+                    array_map(fn (array $metric): array => $this->topicPoint($metric), $topicMetrics),
+                    fn (array $point): bool => null !== $point['y'],
+                )),
             ],
             'rankings' => $this->buildRankings($topicMetrics),
         ];
@@ -102,19 +103,39 @@ final class FieldAnalyticsService
     }
 
     /**
+     * @param list<string> $months
+     *
+     * @return array<string, true>
+     */
+    private function coveredMonthSet(array $months): array
+    {
+        $set = [];
+        foreach ($months as $month) {
+            $set[$month] = true;
+        }
+
+        return $set;
+    }
+
+    /**
      * @param list<array<string, mixed>> $rows
-     * @param list<string>              $months
+     * @param array<string, true>        $coveredMonths
      *
      * @return array{
      *     topicMeta: array<int, array<string, mixed>>,
      *     subfieldMeta: array<int, array<string, mixed>>,
      *     topicCounts: array<int, array<string, int>>,
      *     subfieldCounts: array<int, array<string, int>>,
-     *     fieldCounts: array<string, int>
+     *     fieldCounts: array<string, int>,
+     *     coveredMonths: array<string, true>
      * }
      */
-    private function buildMonthlyState(array $rows, \DateTimeImmutable $loadStart, \DateTimeImmutable $periodEnd): array
-    {
+    private function buildMonthlyState(
+        array $rows,
+        \DateTimeImmutable $loadStart,
+        \DateTimeImmutable $periodEnd,
+        array $coveredMonths,
+    ): array {
         $months = $this->monthKeys($loadStart, $periodEnd);
         $fieldCounts = array_fill_keys($months, 0);
         $topicMeta = [];
@@ -153,71 +174,84 @@ final class FieldAnalyticsService
             'topicCounts' => $topicCounts,
             'subfieldCounts' => $subfieldCounts,
             'fieldCounts' => $fieldCounts,
+            'coveredMonths' => $coveredMonths,
         ];
     }
 
     /**
      * @param array<string, mixed> $state
-     * @param list<string>         $months
      *
      * @return list<array<string, mixed>>
      */
-    private function buildTopicMetrics(array $state, \DateTimeImmutable $periodEnd, int $comparisonWindow, array $months): array
+    private function buildTopicMetrics(array $state, \DateTimeImmutable $periodEnd, int $comparisonWindow): array
     {
         $recent12Start = $this->addMonths($periodEnd, -11);
-        $previous12Start = $this->addMonths($periodEnd, -23);
-        $previous12End = $this->addMonths($periodEnd, -12);
         $recentWindowStart = $this->addMonths($periodEnd, -($comparisonWindow - 1));
         $previousWindowStart = $this->addMonths($periodEnd, -(2 * $comparisonWindow - 1));
         $previousWindowEnd = $this->addMonths($periodEnd, -$comparisonWindow);
+        $coveredMonths = $state['coveredMonths'];
+        $recent12Window = $this->windowInfo($state['fieldCounts'], $coveredMonths, $recent12Start, $periodEnd);
+        $recentComparisonWindow = $this->windowInfo($state['fieldCounts'], $coveredMonths, $recentWindowStart, $periodEnd);
+        $previousComparisonWindow = $this->windowInfo($state['fieldCounts'], $coveredMonths, $previousWindowStart, $previousWindowEnd);
 
         $metrics = [];
         foreach ($state['topicMeta'] as $topicId => $topic) {
             $subfieldId = (int) $topic['subfieldId'];
             $topicCounts = $state['topicCounts'][$topicId] ?? [];
             $subfieldCounts = $state['subfieldCounts'][$subfieldId] ?? [];
-            $papersLast12m = $this->windowSum($topicCounts, $recent12Start, $periodEnd);
-            $previousPapersLast12m = $this->windowSum($topicCounts, $previous12Start, $previous12End);
-            $subfieldLast12m = $this->windowSum($subfieldCounts, $recent12Start, $periodEnd);
-            $recentWindowPapers = $this->windowSum($topicCounts, $recentWindowStart, $periodEnd);
-            $previousWindowPapers = $this->windowSum($topicCounts, $previousWindowStart, $previousWindowEnd);
-            $recentSubfieldPapers = $this->windowSum($subfieldCounts, $recentWindowStart, $periodEnd);
-            $previousSubfieldPapers = $this->windowSum($subfieldCounts, $previousWindowStart, $previousWindowEnd);
-            $share = $this->safeDivide($papersLast12m, $subfieldLast12m, 0.0);
-            $recentShare = $this->safeDivide($recentWindowPapers, $recentSubfieldPapers, 0.0);
-            $previousShare = $this->safeDivide($previousWindowPapers, $previousSubfieldPapers, 0.0);
-            $monthlyRecentShares = $this->monthlyShares($topicCounts, $subfieldCounts, $recentWindowStart, $periodEnd);
-            $monthlyPreviousShares = $this->monthlyShares($topicCounts, $subfieldCounts, $previousWindowStart, $previousWindowEnd);
-            $burstScore = (
-                $this->average($monthlyRecentShares) - $this->average($monthlyPreviousShares)
-            ) / ($this->standardDeviation($monthlyPreviousShares) + self::EPSILON_SHARE);
+
+            $topicRecent12 = $this->windowInfo($topicCounts, $coveredMonths, $recent12Start, $periodEnd);
+            $subfieldRecent12 = $this->windowInfo($subfieldCounts, $coveredMonths, $recent12Start, $periodEnd);
+            $topicRecent = $this->windowInfo($topicCounts, $coveredMonths, $recentWindowStart, $periodEnd);
+            $topicPrevious = $this->windowInfo($topicCounts, $coveredMonths, $previousWindowStart, $previousWindowEnd);
+            $subfieldRecent = $this->windowInfo($subfieldCounts, $coveredMonths, $recentWindowStart, $periodEnd);
+            $subfieldPrevious = $this->windowInfo($subfieldCounts, $coveredMonths, $previousWindowStart, $previousWindowEnd);
+
+            $share = $this->safeDivide((int) $topicRecent12['papers'], (int) $subfieldRecent12['papers'], 0.0);
+            $recentShare = $this->safeDivide((int) $topicRecent['papers'], (int) $subfieldRecent['papers'], 0.0);
+            $previousShare = $this->safeDivide((int) $topicPrevious['papers'], (int) $subfieldPrevious['papers'], 0.0);
+            $hasComparison = $recentComparisonWindow['isComplete']
+                && $previousComparisonWindow['isComplete']
+                && (int) $subfieldPrevious['papers'] > 0;
+            $deltaShare = $hasComparison ? $recentShare - $previousShare : null;
+            $monthlyRecentShares = $this->monthlyShares($topicCounts, $subfieldCounts, $recentWindowStart, $periodEnd, $coveredMonths);
+            $monthlyPreviousShares = $this->monthlyShares($topicCounts, $subfieldCounts, $previousWindowStart, $previousWindowEnd, $coveredMonths);
+            $burstScore = $hasComparison && count($monthlyPreviousShares) >= 2
+                ? ($this->average($monthlyRecentShares) - $this->average($monthlyPreviousShares)) / ($this->standardDeviation($monthlyPreviousShares) + 0.000001)
+                : null;
             $nonZeroRecentMonths = 0;
             foreach ($this->monthKeys($recent12Start, $periodEnd) as $month) {
-                if (($topicCounts[$month] ?? 0) > 0) {
+                if (isset($coveredMonths[$month]) && ($topicCounts[$month] ?? 0) > 0) {
                     ++$nonZeroRecentMonths;
                 }
             }
 
-            $confidence = 0.70 * min(1.0, $papersLast12m / self::ACTIVE_TOPIC_THRESHOLD)
-                + 0.30 * min(1.0, $nonZeroRecentMonths / 6);
+            $volumeScore = min(1.0, (int) $topicRecent12['papers'] / self::ACTIVE_TOPIC_THRESHOLD);
+            $regularityDenominator = max(1, min(6, (int) $recent12Window['observedMonths']));
+            $regularityScore = min(1.0, $nonZeroRecentMonths / $regularityDenominator);
+            $confidence = (0.70 * $volumeScore + 0.30 * $regularityScore) * (float) $recent12Window['coverage'];
 
             $metrics[] = [
                 'topicId' => $topicId,
                 'topicName' => (string) $topic['name'],
                 'subfieldId' => $subfieldId,
                 'subfieldName' => (string) $topic['subfieldName'],
-                'papersLast12m' => $papersLast12m,
-                'previousPapersLast12m' => $previousPapersLast12m,
+                'papersLast12m' => (int) $topicRecent12['papers'],
                 'share' => $share,
                 'recentShare' => $recentShare,
-                'previousShare' => $previousShare,
-                'deltaShare' => $recentShare - $previousShare,
-                'momentum' => $recentShare - $previousShare,
-                'growth' => $this->growth($recentWindowPapers, $previousWindowPapers),
+                'previousShare' => $hasComparison ? $previousShare : null,
+                'deltaShare' => $deltaShare,
+                'momentum' => $deltaShare,
+                'growth' => $this->growth(
+                    (int) $topicRecent['papers'],
+                    (int) $topicPrevious['papers'],
+                    (bool) $recentComparisonWindow['isComplete'],
+                    (bool) $previousComparisonWindow['isComplete'],
+                ),
                 'burstScore' => $burstScore,
                 'confidence' => min(1.0, $confidence),
-                'logPapers' => $papersLast12m > 0 ? log($papersLast12m) : 0.0,
-                'monthCount' => count($months),
+                'coverage' => (float) $recent12Window['coverage'],
+                'logPapers' => (int) $topicRecent12['papers'] > 0 ? log((int) $topicRecent12['papers']) : 0.0,
             ];
         }
 
@@ -235,10 +269,10 @@ final class FieldAnalyticsService
             return [];
         }
 
-        $deltaValues = array_column($metrics, 'deltaShare');
-        $growthValues = array_column($metrics, 'growth');
+        $deltaValues = array_map(fn (array $row): float => (float) ($row['deltaShare'] ?? 0), $metrics);
+        $growthValues = array_map(fn (array $row): float => (float) ($row['growth'] ?? 0), $metrics);
         $volumeValues = array_map(fn (array $row): float => log(1 + (float) $row['papersLast12m']), $metrics);
-        $burstValues = array_column($metrics, 'burstScore');
+        $burstValues = array_map(fn (array $row): float => (float) ($row['burstScore'] ?? 0), $metrics);
         $shareValues = array_column($metrics, 'share');
         $paperValues = array_column($metrics, 'papersLast12m');
 
@@ -291,22 +325,31 @@ final class FieldAnalyticsService
         $recentWindowStart = $this->addMonths($periodEnd, -($comparisonWindow - 1));
         $previousWindowStart = $this->addMonths($periodEnd, -(2 * $comparisonWindow - 1));
         $previousWindowEnd = $this->addMonths($periodEnd, -$comparisonWindow);
-        $fieldLast12m = $this->windowSum($state['fieldCounts'], $recent12Start, $periodEnd);
+        $coveredMonths = $state['coveredMonths'];
+        $fieldLast12m = $this->windowInfo($state['fieldCounts'], $coveredMonths, $recent12Start, $periodEnd);
+        $recentWindow = $this->windowInfo($state['fieldCounts'], $coveredMonths, $recentWindowStart, $periodEnd);
+        $previousWindow = $this->windowInfo($state['fieldCounts'], $coveredMonths, $previousWindowStart, $previousWindowEnd);
         $items = [];
 
         foreach ($state['subfieldMeta'] as $subfieldId => $meta) {
             $counts = $state['subfieldCounts'][$subfieldId] ?? [];
-            $recentPapers = $this->windowSum($counts, $recentWindowStart, $periodEnd);
-            $previousPapers = $this->windowSum($counts, $previousWindowStart, $previousWindowEnd);
-            $papersLast12m = $this->windowSum($counts, $recent12Start, $periodEnd);
+            $recentPapers = $this->windowInfo($counts, $coveredMonths, $recentWindowStart, $periodEnd);
+            $previousPapers = $this->windowInfo($counts, $coveredMonths, $previousWindowStart, $previousWindowEnd);
+            $papersLast12m = $this->windowInfo($counts, $coveredMonths, $recent12Start, $periodEnd);
 
             $items[] = [
                 'id' => $subfieldId,
                 'name' => (string) $meta['name'],
-                'papersLast12m' => $papersLast12m,
-                'yoyGrowth' => $this->growth($recentPapers, $previousPapers),
-                'shareInsideField' => $this->safeDivide($papersLast12m, $fieldLast12m, 0.0),
-                'series' => $this->buildSeries($counts, $chartMonths, $movingAverageWindow),
+                'papersLast12m' => (int) $papersLast12m['papers'],
+                'yoyGrowth' => $this->growth(
+                    (int) $recentPapers['papers'],
+                    (int) $previousPapers['papers'],
+                    (bool) $recentWindow['isComplete'],
+                    (bool) $previousWindow['isComplete'],
+                ),
+                'shareInsideField' => $this->safeDivide((int) $papersLast12m['papers'], (int) $fieldLast12m['papers'], 0.0),
+                'coverage' => (float) $papersLast12m['coverage'],
+                'series' => $this->buildSeries($counts, $chartMonths, $movingAverageWindow, $coveredMonths),
             ];
         }
 
@@ -316,55 +359,87 @@ final class FieldAnalyticsService
     }
 
     /**
+     * @param array<string, mixed>       $fieldRow
      * @param array<string, mixed>       $state
      * @param list<array<string, mixed>> $topicMetrics
      *
      * @return array<string, mixed>
      */
-    private function buildKpi(array $state, \DateTimeImmutable $periodEnd, array $topicMetrics): array
+    private function buildKpi(array $fieldRow, array $state, \DateTimeImmutable $periodEnd, int $comparisonWindow, array $topicMetrics): array
     {
         $recent12Start = $this->addMonths($periodEnd, -11);
-        $previous12Start = $this->addMonths($periodEnd, -23);
-        $previous12End = $this->addMonths($periodEnd, -12);
-        $papersLast12m = $this->windowSum($state['fieldCounts'], $recent12Start, $periodEnd);
-        $previousPapersLast12m = $this->windowSum($state['fieldCounts'], $previous12Start, $previous12End);
+        $currentComparisonStart = $this->addMonths($periodEnd, -($comparisonWindow - 1));
+        $previousComparisonStart = $this->addMonths($periodEnd, -(2 * $comparisonWindow - 1));
+        $previousComparisonEnd = $this->addMonths($periodEnd, -$comparisonWindow);
+        $coveredMonths = $state['coveredMonths'];
+        $papersLast12m = $this->windowInfo($state['fieldCounts'], $coveredMonths, $recent12Start, $periodEnd);
+        $currentComparison = $this->windowInfo($state['fieldCounts'], $coveredMonths, $currentComparisonStart, $periodEnd);
+        $previousComparison = $this->windowInfo($state['fieldCounts'], $coveredMonths, $previousComparisonStart, $previousComparisonEnd);
         $activeTopics = count(array_filter(
             $topicMetrics,
             fn (array $topic): bool => (int) $topic['papersLast12m'] >= self::ACTIVE_TOPIC_THRESHOLD,
         ));
 
         return [
-            'papersLast12m' => $papersLast12m,
-            'previousPapersLast12m' => $previousPapersLast12m,
-            'changePercent' => $this->growth($papersLast12m, $previousPapersLast12m),
+            'domainName' => $fieldRow['domain_name'] ?? null,
+            'fieldName' => (string) $fieldRow['name'],
+            'subfieldsCount' => (int) ($fieldRow['subfields_count'] ?? 0),
+            'papersLast12m' => (int) $papersLast12m['papers'],
+            'papersLast12mWindow' => $papersLast12m,
+            'comparisonCurrentPapers' => (int) $currentComparison['papers'],
+            'comparisonPreviousPapers' => (int) $previousComparison['papers'],
+            'comparisonCurrentWindow' => $currentComparison,
+            'comparisonPreviousWindow' => $previousComparison,
+            'comparisonWindowMonths' => $comparisonWindow,
+            'changePercent' => $this->growth(
+                (int) $currentComparison['papers'],
+                (int) $previousComparison['papers'],
+                (bool) $currentComparison['isComplete'],
+                (bool) $previousComparison['isComplete'],
+            ),
             'activeTopics' => $activeTopics,
         ];
     }
 
     /**
-     * @param array<string, int> $counts
-     * @param list<string>       $months
+     * @param array<string, int>  $counts
+     * @param list<string>        $months
+     * @param array<string, true> $coveredMonths
      *
-     * @return list<array{period: string, papers: int, movingAverage: float}>
+     * @return list<array{period: string, papers: int|null, movingAverage: float|null, isObserved: bool}>
      */
-    private function buildSeries(array $counts, array $months, int $window): array
+    private function buildSeries(array $counts, array $months, int $window, array $coveredMonths): array
     {
-        $values = [];
-        foreach ($months as $month) {
-            $values[] = (int) ($counts[$month] ?? 0);
-        }
-
-        $movingAverage = $this->movingAverage($values, $window);
         $series = [];
-        foreach ($months as $index => $month) {
+        foreach ($months as $month) {
+            $isObserved = isset($coveredMonths[$month]);
             $series[] = [
                 'period' => $month,
-                'papers' => $values[$index],
-                'movingAverage' => $movingAverage[$index],
+                'papers' => $isObserved ? (int) ($counts[$month] ?? 0) : null,
+                'movingAverage' => $isObserved ? $this->calendarMovingAverage($counts, $coveredMonths, $month, $window) : null,
+                'isObserved' => $isObserved,
             ];
         }
 
         return $series;
+    }
+
+    /**
+     * @param array<string, int>  $counts
+     * @param array<string, true> $coveredMonths
+     */
+    private function calendarMovingAverage(array $counts, array $coveredMonths, string $month, int $window): ?float
+    {
+        $end = new \DateTimeImmutable($month . '-01');
+        $start = $this->addMonths($end, -($window - 1));
+        $values = [];
+        foreach ($this->monthKeys($start, $end) as $monthKey) {
+            if (isset($coveredMonths[$monthKey])) {
+                $values[] = (int) ($counts[$monthKey] ?? 0);
+            }
+        }
+
+        return [] === $values ? null : $this->average($values);
     }
 
     /**
@@ -377,7 +452,7 @@ final class FieldAnalyticsService
         return [
             ...$this->topicRankingRecord($metric),
             'x' => (float) $metric['logPapers'],
-            'y' => (float) $metric['momentum'],
+            'y' => null === $metric['momentum'] ? null : (float) $metric['momentum'],
         ];
     }
 
@@ -444,11 +519,12 @@ final class FieldAnalyticsService
             ],
             'papersLast12m' => (int) $metric['papersLast12m'],
             'share' => (float) $metric['share'],
-            'deltaShare' => (float) $metric['deltaShare'],
-            'momentum' => (float) $metric['momentum'],
-            'yoyGrowth' => (float) $metric['growth'],
-            'burstScore' => (float) $metric['burstScore'],
+            'deltaShare' => null === $metric['deltaShare'] ? null : (float) $metric['deltaShare'],
+            'momentum' => null === $metric['momentum'] ? null : (float) $metric['momentum'],
+            'yoyGrowth' => null === $metric['growth'] ? null : (float) $metric['growth'],
+            'burstScore' => null === $metric['burstScore'] ? null : (float) $metric['burstScore'],
             'confidence' => (float) $metric['confidence'],
+            'coverage' => (float) $metric['coverage'],
             'status' => (string) $metric['status'],
         ];
     }
@@ -459,69 +535,103 @@ final class FieldAnalyticsService
      */
     private function classifyTopic(array $metric, array $thresholds): string
     {
+        $deltaShare = (float) ($metric['deltaShare'] ?? 0);
+        $burstScore = (float) ($metric['burstScore'] ?? 0);
+
         if ((float) $metric['confidence'] < 0.4 || (int) $metric['papersLast12m'] < self::ACTIVE_TOPIC_THRESHOLD) {
             return 'low_confidence';
         }
 
         if (
-            (float) $metric['deltaShare'] > $thresholds['highDelta']
-            && (float) $metric['burstScore'] > $thresholds['highBurst']
+            $deltaShare > $thresholds['highDelta']
+            && $burstScore > $thresholds['highBurst']
             && (int) $metric['papersLast12m'] < $thresholds['mediumVolume']
         ) {
             return 'emerging';
         }
 
         if (
-            (float) $metric['deltaShare'] > $thresholds['highDelta']
-            && (float) $metric['burstScore'] > $thresholds['mediumBurst']
+            $deltaShare > $thresholds['highDelta']
+            && $burstScore > $thresholds['mediumBurst']
             && (int) $metric['papersLast12m'] >= $thresholds['mediumVolume']
         ) {
             return 'accelerating';
         }
 
-        if ((float) $metric['share'] > $thresholds['highShare'] && abs((float) $metric['deltaShare']) <= $thresholds['smallDelta']) {
-            return 'popular_hot';
+        if ($deltaShare < $thresholds['negativeDelta'] && $burstScore < $thresholds['negativeBurst']) {
+            return 'declining';
         }
 
-        if ((float) $metric['deltaShare'] < $thresholds['negativeDelta'] && (float) $metric['burstScore'] < $thresholds['negativeBurst']) {
-            return 'declining';
+        if ((float) $metric['share'] > $thresholds['highShare'] && $deltaShare >= $thresholds['negativeDelta']) {
+            return 'popular_hot';
         }
 
         return 'stable';
     }
 
     /**
-     * @param array<string, int> $topicCounts
-     * @param array<string, int> $subfieldCounts
+     * @param array<string, int>  $topicCounts
+     * @param array<string, int>  $subfieldCounts
+     * @param array<string, true> $coveredMonths
      *
      * @return list<float>
      */
-    private function monthlyShares(array $topicCounts, array $subfieldCounts, \DateTimeImmutable $start, \DateTimeImmutable $end): array
-    {
+    private function monthlyShares(
+        array $topicCounts,
+        array $subfieldCounts,
+        \DateTimeImmutable $start,
+        \DateTimeImmutable $end,
+        array $coveredMonths,
+    ): array {
         $shares = [];
         foreach ($this->monthKeys($start, $end) as $month) {
-            $shares[] = $this->safeDivide((int) ($topicCounts[$month] ?? 0), (int) ($subfieldCounts[$month] ?? 0), 0.0);
+            if (isset($coveredMonths[$month])) {
+                $shares[] = $this->safeDivide((int) ($topicCounts[$month] ?? 0), (int) ($subfieldCounts[$month] ?? 0), 0.0);
+            }
         }
 
         return $shares;
     }
 
     /**
-     * @param array<string, int> $counts
+     * @param array<string, int>  $counts
+     * @param array<string, true> $coveredMonths
+     *
+     * @return array{start: string, end: string, papers: int, expectedMonths: int, observedMonths: int, coverage: float, isComplete: bool}
      */
-    private function windowSum(array $counts, \DateTimeImmutable $start, \DateTimeImmutable $end): int
+    private function windowInfo(array $counts, array $coveredMonths, \DateTimeImmutable $start, \DateTimeImmutable $end): array
     {
-        $sum = 0;
-        foreach ($this->monthKeys($start, $end) as $month) {
-            $sum += (int) ($counts[$month] ?? 0);
+        $months = $this->monthKeys($start, $end);
+        $observed = 0;
+        $papers = 0;
+        foreach ($months as $month) {
+            if (!isset($coveredMonths[$month])) {
+                continue;
+            }
+            ++$observed;
+            $papers += (int) ($counts[$month] ?? 0);
         }
 
-        return $sum;
+        $expected = count($months);
+
+        return [
+            'start' => $this->monthStart($start)->format('Y-m'),
+            'end' => $this->monthStart($end)->format('Y-m'),
+            'papers' => $papers,
+            'expectedMonths' => $expected,
+            'observedMonths' => $observed,
+            'coverage' => 0 === $expected ? 0.0 : $observed / $expected,
+            'isComplete' => $expected > 0 && $observed === $expected,
+        ];
     }
 
-    private function growth(int|float $recent, int|float $previous): float
+    private function growth(int|float $recent, int|float $previous, bool $recentComplete, bool $previousComplete): ?float
     {
-        return (((float) $recent + self::EPSILON_COUNT) / ((float) $previous + self::EPSILON_COUNT)) - 1;
+        if (!$recentComplete || !$previousComplete || (float) $previous <= 0.0) {
+            return null;
+        }
+
+        return ((float) $recent / (float) $previous) - 1;
     }
 
     private function safeDivide(int|float $numerator, int|float $denominator, float $default): float
@@ -531,23 +641,6 @@ final class FieldAnalyticsService
         }
 
         return (float) $numerator / (float) $denominator;
-    }
-
-    /**
-     * @param list<int> $values
-     *
-     * @return list<float>
-     */
-    private function movingAverage(array $values, int $window): array
-    {
-        $result = [];
-        foreach ($values as $index => $value) {
-            $start = max(0, $index - $window + 1);
-            $slice = array_slice($values, $start, $index - $start + 1);
-            $result[] = $this->average($slice);
-        }
-
-        return $result;
     }
 
     /**
