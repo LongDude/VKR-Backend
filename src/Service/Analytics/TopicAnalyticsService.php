@@ -143,6 +143,7 @@ final class TopicAnalyticsService
             'publicationDate' => $paper['publication_date'] ?? null,
             'language' => $paper['language'] ?? null,
             'abstract' => $paper['abstract'] ?? null,
+            'extractedKeywords' => $this->jsonAny($paper['extracted_keywords_json'] ?? null),
             'isOpenAccess' => null === $paper['is_open_access'] ? null : (bool) $paper['is_open_access'],
             'citedBy' => (int) ($paper['cited_by_count'] ?? 0),
             'referencesCount' => (int) ($paper['references_count'] ?? 0),
@@ -597,5 +598,22 @@ final class TopicAnalyticsService
         $decoded = is_string($value) ? json_decode($value, true) : $value;
 
         return is_array($decoded) ? array_values(array_filter($decoded, 'is_array')) : [];
+    }
+
+    private function jsonAny(mixed $value): mixed
+    {
+        if (null === $value || '' === $value) {
+            return null;
+        }
+
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        try {
+            return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return null;
+        }
     }
 }

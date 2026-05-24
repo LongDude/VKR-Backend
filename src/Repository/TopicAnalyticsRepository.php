@@ -308,7 +308,7 @@ LEFT JOIN LATERAL (
 WHERE r.topic_id = :topic_id
   AND r.period_start <= :date_to
   AND r.period_end >= :date_from
-ORDER BY r.period_start ASC
+ORDER BY r.period_start DESC
 SQL,
             [
                 'topic_id' => $topicId,
@@ -339,6 +339,7 @@ SELECT
     p.publication_date::date AS publication_date,
     p.language,
     p.abstract,
+    p.extracted_keywords::text AS extracted_keywords_json,
     p.is_open_access,
     p.cited_by_count,
     p.references_count,
