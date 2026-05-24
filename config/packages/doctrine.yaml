@@ -1,7 +1,7 @@
 doctrine:
     dbal:
         url: '%env(resolve:DATABASE_URL)%'
-        schema_filter: '~^(users|users_id_seq)$~'
+        schema_filter: '~^(users|users_id_seq|domains|domains_id_seq|fields|fields_id_seq|subfields|subfields_id_seq|topics|topics_id_seq|openalex_montly_topic_stats|openalex_montly_topic_stats_id_seq)$~'
 
         # IMPORTANT: You MUST configure your server version,
         # either here or in the DATABASE_URL env var (see .env file)
