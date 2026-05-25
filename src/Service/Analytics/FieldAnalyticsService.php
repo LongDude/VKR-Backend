@@ -474,8 +474,8 @@ final class FieldAnalyticsService
         return [
             'popular' => $this->rank($eligible, 'papersLast12m'),
             'growing' => $this->rank($eligible, 'trendScore'),
-            'emerging' => $this->rank($eligible, 'emergingScore'),
-            'declining' => $this->rank($eligible, 'decliningScore'),
+            'emerging' => $this->rankByStatus($eligible, 'emerging', 'emergingScore'),
+            'declining' => $this->rankByStatus($eligible, 'declining', 'decliningScore'),
         ];
     }
 
@@ -502,6 +502,22 @@ final class FieldAnalyticsService
     }
 
     /**
+     * @param list<array<string, mixed>> $topics
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function rankByStatus(array $topics, string $status, string $scoreField): array
+    {
+        return $this->rank(
+            array_values(array_filter(
+                $topics,
+                fn (array $topic): bool => ($topic['status'] ?? null) === $status,
+            )),
+            $scoreField,
+        );
+    }
+
+    /**
      * @param array<string, mixed> $metric
      *
      * @return array<string, mixed>
@@ -523,6 +539,9 @@ final class FieldAnalyticsService
             'momentum' => null === $metric['momentum'] ? null : (float) $metric['momentum'],
             'yoyGrowth' => null === $metric['growth'] ? null : (float) $metric['growth'],
             'burstScore' => null === $metric['burstScore'] ? null : (float) $metric['burstScore'],
+            'trendScore' => null === ($metric['trendScore'] ?? null) ? null : (float) $metric['trendScore'],
+            'emergingScore' => null === ($metric['emergingScore'] ?? null) ? null : (float) $metric['emergingScore'],
+            'decliningScore' => null === ($metric['decliningScore'] ?? null) ? null : (float) $metric['decliningScore'],
             'confidence' => (float) $metric['confidence'],
             'coverage' => (float) $metric['coverage'],
             'status' => (string) $metric['status'],
