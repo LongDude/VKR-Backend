@@ -34,9 +34,14 @@ final class UserToolsMlClient
         $body = json_encode($payload, JSON_THROW_ON_ERROR);
         $errors = [];
         foreach ($this->baseUrls() as $baseUrl) {
-            $result = $this->postJson($baseUrl, $path, $body);
-            if ($result['available']) {
-                return $result;
+            for ($attempt = 1; $attempt <= 2; ++$attempt) {
+                $result = $this->postJson($baseUrl, $path, $body);
+                if ($result['available']) {
+                    return $result;
+                }
+                if (1 === $attempt) {
+                    usleep(250_000);
+                }
             }
             $errors = [...$errors, ...$result['errors']];
         }
@@ -52,20 +57,7 @@ final class UserToolsMlClient
         $configured = rtrim((string) ($_ENV['ML_SERVICE_BASE_URL'] ?? $_SERVER['ML_SERVICE_BASE_URL'] ?? getenv('ML_SERVICE_BASE_URL') ?: ''), '/');
         $candidates = array_filter([$configured, 'http://vkr-ml-api:8000', 'http://host.docker.internal:8000', 'http://localhost:8000']);
 
-        return array_values(array_filter(array_unique($candidates), fn (string $url): bool => $this->isResolvable($url)));
-    }
-
-    private function isResolvable(string $baseUrl): bool
-    {
-        $host = parse_url($baseUrl, PHP_URL_HOST);
-        if (!is_string($host) || '' === $host) {
-            return false;
-        }
-        if (in_array($host, ['localhost', '127.0.0.1', 'host.docker.internal'], true)) {
-            return true;
-        }
-
-        return gethostbyname($host) !== $host;
+        return array_values(array_unique($candidates));
     }
 
     /**

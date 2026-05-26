@@ -256,6 +256,7 @@ final class UserToolsController extends AbstractController
             'isOpenAccess' => null === $row['is_open_access'] ? null : (bool) $row['is_open_access'],
             'citedBy' => (int) ($row['cited_by_count'] ?? 0),
             'referencesCount' => (int) ($row['references_count'] ?? 0),
+            'extractedKeywords' => $this->jsonAny($row['extracted_keywords_json'] ?? null),
             'authors' => (string) ($row['author_names'] ?? ''),
             'isFavorite' => $isFavorite,
         ];
@@ -274,6 +275,7 @@ final class UserToolsController extends AbstractController
             'isOpenAccess' => null === ($paper['is_open_access'] ?? null) ? null : (bool) $paper['is_open_access'],
             'citedBy' => (int) ($paper['cited_by_count'] ?? 0),
             'referencesCount' => (int) ($paper['references_count'] ?? 0),
+            'extractedKeywords' => $paper['extracted_keywords'] ?? null,
             'isFavorite' => $isFavorite,
         ];
     }
@@ -311,5 +313,21 @@ final class UserToolsController extends AbstractController
     private function integerList(mixed $value): array
     {
         return array_values(array_unique(array_filter(array_map('intval', is_array($value) ? $value : []), fn (int $id): bool => $id > 0)));
+    }
+
+    private function jsonAny(mixed $value): mixed
+    {
+        if (null === $value || '' === $value) {
+            return null;
+        }
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        try {
+            return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return null;
+        }
     }
 }

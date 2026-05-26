@@ -152,6 +152,7 @@ SELECT
     p.is_open_access,
     p.cited_by_count,
     p.references_count,
+    p.extracted_keywords::text AS extracted_keywords_json,
     f.created_at AS favorite_created_at,
     COALESCE(authors.author_names, '') AS author_names
 FROM user_favourite_papers f
