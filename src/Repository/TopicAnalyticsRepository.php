@@ -441,8 +441,10 @@ SELECT
     p.publication_date::date AS publication_date,
     p.doi,
     p.openalex_id,
+    p.extracted_keywords::text AS extracted_keywords_json,
     p.cited_by_count,
     COALESCE(authors.author_names, '') AS author_names,
+    COALESCE(keywords.keywords, '[]'::json)::text AS keywords_json,
     COALESCE(best_landing.landing_url, p.doi, p.openalex_id) AS source,
     :reason AS reason_selected
 FROM papers p
@@ -452,6 +454,12 @@ LEFT JOIN LATERAL (
     JOIN authors a ON a.id = pa.author_id
     WHERE pa.paper_id = p.id
 ) authors ON TRUE
+LEFT JOIN LATERAL (
+    SELECT json_agg(json_build_object('id', k.id, 'value', k.value, 'score', pk.score) ORDER BY pk.score DESC NULLS LAST, k.value) AS keywords
+    FROM paper_keywords pk
+    JOIN keywords k ON k.id = pk.keyword_id
+    WHERE pk.paper_id = p.id
+) keywords ON TRUE
 LEFT JOIN LATERAL (
     SELECT landing_url
     FROM landings l

@@ -426,6 +426,8 @@ final class TopicAnalyticsService
                 'date' => $row['publication_date'] ?? null,
                 'authors' => (string) ($row['author_names'] ?? ''),
                 'source' => $row['source'] ?? null,
+                'extractedKeywords' => $this->jsonAny($row['extracted_keywords_json'] ?? null),
+                'keywords' => $this->jsonList($row['keywords_json'] ?? '[]'),
                 'citedBy' => $citedBy,
                 'citationVelocity' => null === $ageMonths ? null : $citedBy / $ageMonths,
                 'reasonSelected' => (string) $row['reason_selected'],
