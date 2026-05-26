@@ -326,7 +326,7 @@ SQL,
     /**
      * @return array<string, mixed>|null
      */
-    public function findPaper(int $paperId): ?array
+    public function findPaper(int $paperId, ?int $userId = null): ?array
     {
         $row = $this->connection->fetchAssociative(
             <<<'SQL'
@@ -343,6 +343,13 @@ SELECT
     p.is_open_access,
     p.cited_by_count,
     p.references_count,
+    CASE
+        WHEN :user_id <= 0 THEN false
+        ELSE EXISTS (
+            SELECT 1 FROM user_favourite_papers f
+            WHERE f.user_id = :user_id AND f.paper_id = p.id
+        )
+    END AS is_favorite,
     COALESCE(authors.authors, '[]'::json)::text AS authors_json,
     COALESCE(keywords.keywords, '[]'::json)::text AS keywords_json,
     COALESCE(topics.topics, '[]'::json)::text AS topics_json,
@@ -373,8 +380,8 @@ LEFT JOIN LATERAL (
 ) landings ON TRUE
 WHERE p.id = :paper_id
 SQL,
-            ['paper_id' => $paperId],
-            ['paper_id' => ParameterType::INTEGER],
+            ['paper_id' => $paperId, 'user_id' => $userId ?? 0],
+            ['paper_id' => ParameterType::INTEGER, 'user_id' => ParameterType::INTEGER],
         );
 
         return false === $row ? null : $row;

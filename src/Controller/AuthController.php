@@ -72,6 +72,68 @@ final class AuthController extends AbstractController
         return $this->json(['user' => $this->normalizeUser($user)]);
     }
 
+    #[Route('/api/me', name: 'api_me_update', methods: ['PATCH'])]
+    public function updateMe(Request $request, UserRepository $users, EntityManagerInterface $entityManager): JsonResponse
+    {
+        $user = $this->getUser();
+        if (!$user instanceof User) {
+            return $this->json(['error' => 'Authentication required.'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        $payload = json_decode($request->getContent(), true);
+        if (!\is_array($payload)) {
+            return $this->json(['error' => 'Invalid JSON payload.'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $email = strtolower(trim((string) ($payload['email'] ?? $user->getEmail())));
+        $name = array_key_exists('name', $payload) ? trim((string) $payload['name']) : $user->getName();
+        if (!filter_var($email, \FILTER_VALIDATE_EMAIL)) {
+            return $this->json(['error' => 'Valid email is required.'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $existing = $users->findOneByEmail($email);
+        if (null !== $existing && (string) $existing->getId() !== (string) $user->getId()) {
+            return $this->json(['error' => 'User with this email already exists.'], Response::HTTP_CONFLICT);
+        }
+
+        $user->setEmail($email)->setName('' === $name ? null : $name);
+        $entityManager->flush();
+
+        return $this->json(['user' => $this->normalizeUser($user)]);
+    }
+
+    #[Route('/api/me/password', name: 'api_me_password', methods: ['POST'])]
+    public function updatePassword(Request $request, UserPasswordHasherInterface $passwordHasher, EntityManagerInterface $entityManager): JsonResponse
+    {
+        $user = $this->getUser();
+        if (!$user instanceof User) {
+            return $this->json(['error' => 'Authentication required.'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        $payload = json_decode($request->getContent(), true);
+        if (!\is_array($payload)) {
+            return $this->json(['error' => 'Invalid JSON payload.'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $currentPassword = (string) ($payload['currentPassword'] ?? '');
+        $newPassword = (string) ($payload['newPassword'] ?? '');
+        $confirmation = (string) ($payload['newPasswordConfirmation'] ?? '');
+        if (!$passwordHasher->isPasswordValid($user, $currentPassword)) {
+            return $this->json(['error' => 'Current password is invalid.'], Response::HTTP_BAD_REQUEST);
+        }
+        if (8 > \strlen($newPassword)) {
+            return $this->json(['error' => 'Password must contain at least 8 characters.'], Response::HTTP_BAD_REQUEST);
+        }
+        if ($newPassword !== $confirmation) {
+            return $this->json(['error' => 'Password confirmation does not match.'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $user->setPassword($passwordHasher->hashPassword($user, $newPassword));
+        $entityManager->flush();
+
+        return $this->json(['ok' => true]);
+    }
+
     /**
      * @return array{id: int|string|null, email: string|null, name: string|null, roles: list<string>}
      */

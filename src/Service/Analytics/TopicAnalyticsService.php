@@ -127,9 +127,9 @@ final class TopicAnalyticsService
     /**
      * @return array<string, mixed>|null
      */
-    public function findPaper(int $paperId): ?array
+    public function findPaper(int $paperId, ?int $userId = null): ?array
     {
-        $paper = $this->repository->findPaper($paperId);
+        $paper = $this->repository->findPaper($paperId, $userId);
         if (null === $paper) {
             return null;
         }
@@ -145,6 +145,7 @@ final class TopicAnalyticsService
             'abstract' => $paper['abstract'] ?? null,
             'extractedKeywords' => $this->jsonAny($paper['extracted_keywords_json'] ?? null),
             'isOpenAccess' => null === $paper['is_open_access'] ? null : (bool) $paper['is_open_access'],
+            'isFavorite' => (bool) ($paper['is_favorite'] ?? false),
             'citedBy' => (int) ($paper['cited_by_count'] ?? 0),
             'referencesCount' => (int) ($paper['references_count'] ?? 0),
             'authors' => $this->jsonList($paper['authors_json'] ?? '[]'),

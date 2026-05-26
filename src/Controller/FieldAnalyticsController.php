@@ -6,6 +6,7 @@ namespace App\Controller;
 
 use App\Dto\Analytics\FieldDashboardRequest;
 use App\Dto\Analytics\TopicDashboardRequest;
+use App\Entity\User;
 use App\Service\Analytics\FieldAnalyticsService;
 use App\Service\Analytics\TopicAnalyticsService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -85,7 +86,8 @@ final class FieldAnalyticsController extends AbstractController
     #[Route('/papers/{paperId<\d+>}', name: 'api_analytics_paper_metadata', methods: ['GET'])]
     public function paper(int $paperId, TopicAnalyticsService $analytics): JsonResponse
     {
-        $paper = $analytics->findPaper($paperId);
+        $user = $this->getUser();
+        $paper = $analytics->findPaper($paperId, $user instanceof User ? (int) $user->getId() : null);
         if (null === $paper) {
             return $this->json(['error' => 'Paper was not found.'], Response::HTTP_NOT_FOUND);
         }
