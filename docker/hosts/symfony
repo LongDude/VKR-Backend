@@ -1,0 +1,7 @@
+fastcgi_pass $backend_upstream;
+fastcgi_read_timeout 240s;
+include fastcgi_params;
+
+fastcgi_param SCRIPT_FILENAME /app/public/index.php;
+fastcgi_param SCRIPT_NAME /index.php;
+fastcgi_param DOCUMENT_ROOT /app/public;
