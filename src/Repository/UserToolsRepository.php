@@ -66,8 +66,7 @@ SQL,
      */
     public function searchOptions(string $type, string $query, int $limit): array
     {
-        $meta = $this->meta($type);
-        $where = '' === $query ? '' : 'WHERE LOWER(e.name) LIKE :query';
+        $sql = $this->searchOptionsSql($type, '' === $query ? '' : 'WHERE LOWER(e.name) LIKE :query');
         $params = ['limit' => $limit];
         $types = ['limit' => ParameterType::INTEGER];
         if ('' !== $query) {
@@ -75,15 +74,7 @@ SQL,
             $types['query'] = ParameterType::STRING;
         }
 
-        return $this->connection->fetchAllAssociative(
-            sprintf(
-                'SELECT e.id, e.name FROM %s e %s ORDER BY e.name ASC LIMIT :limit',
-                $meta['table'],
-                $where,
-            ),
-            $params,
-            $types,
-        );
+        return $this->connection->fetchAllAssociative($sql, $params, $types);
     }
 
     public function addTracked(int $userId, string $type, int $id): void
@@ -245,6 +236,79 @@ SQL,
             'field' => 'fields',
             'subfield' => 'subfields',
             'topic' => 'topics',
+        };
+    }
+
+    private function searchOptionsSql(string $type, string $where): string
+    {
+        return match ($type) {
+            'domain' => sprintf(
+                <<<'SQL'
+SELECT
+    e.id,
+    e.name,
+    COUNT(DISTINCT pt.paper_id)::bigint AS papers_count
+FROM domains e
+LEFT JOIN fields f ON f.domain_id = e.id
+LEFT JOIN subfields sf ON sf.field_id = f.id
+LEFT JOIN topics t ON t.subfield_id = sf.id
+LEFT JOIN paper_topics pt ON pt.topic_id = t.id
+%s
+GROUP BY e.id, e.name
+ORDER BY papers_count DESC, e.name ASC
+LIMIT :limit
+SQL,
+                $where,
+            ),
+            'field' => sprintf(
+                <<<'SQL'
+SELECT
+    e.id,
+    e.name,
+    COUNT(DISTINCT pt.paper_id)::bigint AS papers_count
+FROM fields e
+LEFT JOIN subfields sf ON sf.field_id = e.id
+LEFT JOIN topics t ON t.subfield_id = sf.id
+LEFT JOIN paper_topics pt ON pt.topic_id = t.id
+%s
+GROUP BY e.id, e.name
+ORDER BY papers_count DESC, e.name ASC
+LIMIT :limit
+SQL,
+                $where,
+            ),
+            'subfield' => sprintf(
+                <<<'SQL'
+SELECT
+    e.id,
+    e.name,
+    COUNT(DISTINCT pt.paper_id)::bigint AS papers_count
+FROM subfields e
+LEFT JOIN topics t ON t.subfield_id = e.id
+LEFT JOIN paper_topics pt ON pt.topic_id = t.id
+%s
+GROUP BY e.id, e.name
+ORDER BY papers_count DESC, e.name ASC
+LIMIT :limit
+SQL,
+                $where,
+            ),
+            'topic' => sprintf(
+                <<<'SQL'
+SELECT
+    e.id,
+    e.name,
+    COUNT(DISTINCT pt.paper_id)::bigint AS papers_count
+FROM topics e
+LEFT JOIN paper_topics pt ON pt.topic_id = e.id
+%s
+GROUP BY e.id, e.name
+ORDER BY papers_count DESC, e.name ASC
+LIMIT :limit
+SQL,
+                $where,
+            ),
+            default => throw new \InvalidArgumentException('Unsupported tracked entity type.'),
         };
     }
 }

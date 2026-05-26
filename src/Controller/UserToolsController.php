@@ -35,11 +35,19 @@ final class UserToolsController extends AbstractController
             return $this->json(['error' => 'Unsupported tracked entity type.'], Response::HTTP_BAD_REQUEST);
         }
         $query = trim((string) $request->query->get('query', ''));
-        $limit = max(1, min(50, (int) $request->query->get('limit', 20)));
+        $limit = max(1, min(10, (int) $request->query->get('limit', 10)));
+        if (mb_strlen($query) < 2) {
+            return $this->json(['items' => []]);
+        }
 
         return $this->json([
             'items' => array_map(
-                fn (array $row): array => ['id' => (int) $row['id'], 'name' => (string) $row['name'], 'type' => $type],
+                fn (array $row): array => [
+                    'id' => (int) $row['id'],
+                    'name' => (string) $row['name'],
+                    'type' => $type,
+                    'papersCount' => (int) ($row['papers_count'] ?? 0),
+                ],
                 $repository->searchOptions($type, $query, $limit),
             ),
         ]);
