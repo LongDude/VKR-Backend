@@ -16,6 +16,11 @@ services:
       - .env.local
     networks:
       - vkr-inner-network
+    deploy:
+      resources:
+        limits:
+          cpus: 1
+          memory: 1G
 
 
 networks:
