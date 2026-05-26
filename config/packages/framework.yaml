@@ -3,7 +3,11 @@ framework:
     secret: '%env(APP_SECRET)%'
 
     # Note that the session will be started ONLY if you read or write from it.
-    session: true
+    session:
+        # Keep dev sessions off the Windows bind mount used by Docker Desktop.
+        # /api/me reads the security token from the session on every page reload.
+        save_path: '/tmp/scinside/sessions/%kernel.environment%'
+        metadata_update_threshold: 60
 
     #esi: true
     #fragments: true
