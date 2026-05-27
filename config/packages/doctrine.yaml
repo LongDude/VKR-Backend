@@ -2,6 +2,10 @@ doctrine:
     dbal:
         url: '%env(resolve:DATABASE_URL)%'
         schema_filter: '~^(users|users_id_seq|domains|domains_id_seq|fields|fields_id_seq|subfields|subfields_id_seq|topics|topics_id_seq|openalex_montly_topic_stats|openalex_montly_topic_stats_id_seq|papers|papers_id_seq|authors|authors_id_seq|paper_authors|landings|landings_id_seq|paper_topics|paper_keywords|keywords|keywords_id_seq|research_clusters|research_clusters_id_seq|research_cluster_period_stats|research_cluster_period_stats_id_seq|topic_quarter_reports|topic_quarter_reports_id_seq|topic_quarter_report_items|topic_quarter_report_items_id_seq|topic_quarter_report_papers|user_favourite_papers|user_tracked_domains|user_tracked_fields|user_tracked_subfields|user_tracked_topics|user_tracked_keywords)$~'
+        types:
+            postgres_text_array: App\Doctrine\Type\PostgresTextArrayType
+        mapping_types:
+            _text: postgres_text_array
 
         # IMPORTANT: You MUST configure your server version,
         # either here or in the DATABASE_URL env var (see .env file)

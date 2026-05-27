@@ -53,6 +53,13 @@ final class LoginAuthenticator extends AbstractAuthenticator implements Authenti
         );
     }
 
+    public function createToken(Passport $passport, string $firewallName): TokenInterface
+    {
+        $user = $passport->getUser();
+
+        return new DatabaseRolesToken($user, $firewallName, $user->getRoles());
+    }
+
     public function onAuthenticationSuccess(Request $request, TokenInterface $token, string $firewallName): ?Response
     {
         $user = $token->getUser();
@@ -73,7 +80,7 @@ final class LoginAuthenticator extends AbstractAuthenticator implements Authenti
     }
 
     /**
-     * @return array{id: int|string|null, email: string|null, name: string|null, roles: list<string>}
+     * @return array{id: int|string|null, email: string|null, name: string|null, roles: list<string>, role: string}
      */
     private function normalizeUser(User $user): array
     {
@@ -82,6 +89,7 @@ final class LoginAuthenticator extends AbstractAuthenticator implements Authenti
             'email' => $user->getEmail(),
             'name' => $user->getName(),
             'roles' => $user->getRoles(),
+            'role' => $user->getPrimaryRole(),
         ];
     }
 }

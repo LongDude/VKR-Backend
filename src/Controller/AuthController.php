@@ -135,7 +135,7 @@ final class AuthController extends AbstractController
     }
 
     /**
-     * @return array{id: int|string|null, email: string|null, name: string|null, roles: list<string>}
+     * @return array{id: int|string|null, email: string|null, name: string|null, roles: list<string>, role: string}
      */
     private function normalizeUser(User $user): array
     {
@@ -144,6 +144,7 @@ final class AuthController extends AbstractController
             'email' => $user->getEmail(),
             'name' => $user->getName(),
             'roles' => $user->getRoles(),
+            'role' => $user->getPrimaryRole(),
         ];
     }
 }
