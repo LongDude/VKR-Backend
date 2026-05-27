@@ -71,7 +71,7 @@ final class TopicAnalyticsMlClient
                 'method' => 'POST',
                 'header' => "Content-Type: application/json\r\nAccept: application/json\r\n",
                 'content' => $body,
-                'timeout' => 30,
+                'timeout' => 300,
                 'ignore_errors' => true,
             ],
         ]);
